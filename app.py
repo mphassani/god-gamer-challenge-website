@@ -197,7 +197,7 @@ def Games():
 
     # Calculate total games played
     total_games = wins + losses
-    game_data = data[game_filter]
+
     # Calculate win rate
     win_rate = (wins / total_games) * 100 if total_games > 0 else 0
     
@@ -227,21 +227,25 @@ def Games():
     win_streaks = []
     current_streak = 0
     longest_streak = 0
-    for result in game_data.filter(like="W or L").values:
-        if 'W' in result:
-            current_streak += 1
-            longest_streak = max(longest_streak, current_streak)
-        else:
-            if current_streak > 0:
-                win_streaks.append(current_streak)
-            current_streak = 0
+    
+    for i in range(len(game_filter.columns)):
+        win_loss_column = f"Game {i+1}: W or L"
+        
+        if win_loss_column in data.columns:
+            for result in data[win_loss_column].dropna():
+                if result == 'W':  # Ensure you're comparing the specific result
+                    current_streak += 1
+                    longest_streak = max(longest_streak, current_streak)
+                else:
+                    if current_streak > 0:
+                        win_streaks.append(current_streak)
+                    current_streak = 0
 
     average_streak = sum(win_streaks) / len(win_streaks) if win_streaks else 0
 
     # Display the streaks
     st.write(f"**Longest Win Streak**: {longest_streak}")
     st.write(f"**Average Win Streak**: {average_streak:.2f}")
-    st.write(f"**Current Win Streak**: {current_streak}")
 
     # Dynamically detect the maximum number of games in the dataset
     game_columns = [col for col in data.columns if col.startswith("Game ") and not col.endswith("W or L")]
