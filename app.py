@@ -324,5 +324,5 @@ def Games():
     st.write(f"**Average Games Played After Playing {selected_game} by Turn**")
     st.dataframe(avg_games_after_by_turn)
 
-page = st.navigation([st.Page(Overview), st.Page(Games)])
+page = st.navigation([st.Page(Overview), st.Page(Games)]) 
 page.run()
