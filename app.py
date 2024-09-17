@@ -21,10 +21,13 @@ first_games = data["Game 1"].value_counts().nlargest(5)
 first_game_results = data.groupby("Game 1")["Game 1: W or L"].value_counts(normalize=True).unstack().fillna(0)
 top_5_first_games = first_game_results.loc[first_games.index].reset_index()
 
-total_games_played = data.filter(like="Game").apply(pd.Series.value_counts).fillna(0).sum(axis=1).sort_values(ascending=False)
+total_games_played = data.filter(like="Game").apply(lambda x: x[~x.isin(['W', 'L'])].value_counts()).fillna(0).sum(axis=1).sort_values(ascending=False)
 games_per_day = data.groupby("Day").apply(lambda x: x.filter(like="Game").notnull().sum().sum())
 runs_per_day = data.groupby("Day").size()
-
+# Dropdown to select a game
+games_list = data.filter(like="Game").apply(pd.Series.value_counts).index.tolist()
+# Filter out 'L' and 'W' from the games list
+games_list = [game for game in games_list if game not in ['L', 'W']]
 def Overview():
     st.title("The God Gaming Challenge: Analysis & Strategy")
     st.write("Hey guys, I used u/readalot2 data to create something a bit more visual and interactive. Hope you enjoy and if you have any data ideas let me know I can cook it up quick! I can also link it directly to the sheet so the data updates as new data is entered but I'm working on it.")
@@ -94,6 +97,56 @@ def Overview():
     with col4:
         st.plotly_chart(fig_game_pie, use_container_width=True)
 
+    # Section 5: Average win rate per game displayed in a bar chart
+    st.subheader("Average Win Rate Per Game")
+
+    # Initialize a dictionary to store the total wins, losses, and win rates for each game
+    game_win_rates = {}
+
+    # Loop through each game in the games list
+    for game in games_list:
+        wins = 0
+        losses = 0
+        
+        # Filter the rows where the selected game is played
+        for i in range(len(games_list)):
+            game_column = f"Game {i+1}"
+            win_loss_column = f"Game {i+1}: W or L"
+            
+            if game_column in data.columns and win_loss_column in data.columns:
+                # Only consider rows where the current game is in the 'Game' column
+                game_rows = data[game_column] == game
+                win_loss_data = data.loc[game_rows, win_loss_column]
+                
+                # Count wins and losses for the current game
+                wins += win_loss_data.str.contains('W', na=False).sum()
+                losses += win_loss_data.str.contains('L', na=False).sum()
+
+        # Calculate total games and win rate for this game
+        total_games = wins + losses
+        win_rate = (wins / total_games) * 100 if total_games > 0 else 0
+        
+        # Store the win rate for the current game
+        game_win_rates[game] = win_rate
+
+    # Convert the win rates to a DataFrame for visualization
+    win_rate_df = pd.DataFrame({
+        'Game': list(game_win_rates.keys()),
+        'Win Rate': list(game_win_rates.values())
+    })
+
+    # Create the bar chart using Altair
+    win_rate_chart = alt.Chart(win_rate_df).mark_bar().encode(
+        x='Game:N',
+        y='Win Rate:Q',
+        tooltip=['Game', 'Win Rate']
+    ).properties(
+        title='Average Win Rate Per Game'
+    )
+
+    # Display the chart
+    st.altair_chart(win_rate_chart, use_container_width=True)
+
     # Section 4: Games Played and Runs Per Day using Altair
     st.subheader("Daily Game Activity")
     games_runs_df = pd.DataFrame({
@@ -117,26 +170,37 @@ def Overview():
 def Games():
     st.title("Game-Specific Stats")
     
-    # Dropdown to select a game
-    games_list = data.filter(like="Game").apply(pd.Series.value_counts).index.tolist()
-    # Filter out 'L' and 'W' from the games list
-    games_list = [game for game in games_list if game not in ['L', 'W']]
+
     # Use the filtered games list in the selectbox
     selected_game = st.selectbox("Select a Game", games_list)
 
-    # Filter data for the selected game
-    game_filter = (data.filter(like="Game") == selected_game).any(axis=1)
+    # Filter the rows where the selected game is played
+    game_filter = (data.filter(like="Game") == selected_game)
+
+    # Initialize win and loss counters
+    wins = 0
+    losses = 0
+
+    # Loop through each 'Game X' column and its corresponding 'W or L' column
+    for i in range(len(game_filter.columns)):
+        game_column = f"Game {i+1}"
+        win_loss_column = f"Game {i+1}: W or L"
+        
+        if game_column in data.columns and win_loss_column in data.columns:
+            # Only consider rows where the selected game is in the 'Game' column
+            game_rows = data[game_column] == selected_game
+            win_loss_data = data.loc[game_rows, win_loss_column]
+            
+            # Count wins and losses in the filtered rows
+            wins += win_loss_data.str.contains('W', na=False).sum()
+            losses += win_loss_data.str.contains('L', na=False).sum()
+
+    # Calculate total games played
+    total_games = wins + losses
     game_data = data[game_filter]
-
-    # Data Calculation for the Selected Game
-    total_games = len(game_data)
-    
-    # Counting wins and losses explicitly
-    wins = game_data.filter(like="W or L").apply(lambda x: x.str.contains("W", na=False)).sum().sum()
-    losses = game_data.filter(like=("W or L")).apply(lambda x: x.str.contains("L", na=False)).sum().sum()
-
+    # Calculate win rate
     win_rate = (wins / total_games) * 100 if total_games > 0 else 0
-
+    
     # Display Calculated Metrics
     st.subheader(f"Stats for {selected_game}")
     st.write(f"**Total Games Played**: {total_games}")
@@ -155,7 +219,7 @@ def Games():
         values='Count', 
         names='Result', 
         title=f'Wins vs Losses for {selected_game}',
-        color_discrete_sequence=px.colors.qualitative.Set1
+        color_discrete_sequence=["#2B66A4","#DB0016"]
     )
 
     st.plotly_chart(fig_game_win_loss_pie)
