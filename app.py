@@ -119,6 +119,9 @@ def Games():
     
     # Dropdown to select a game
     games_list = data.filter(like="Game").apply(pd.Series.value_counts).index.tolist()
+    # Filter out 'L' and 'W' from the games list
+    games_list = [game for game in games_list if game not in ['L', 'W']]
+    # Use the filtered games list in the selectbox
     selected_game = st.selectbox("Select a Game", games_list)
 
     # Filter data for the selected game
