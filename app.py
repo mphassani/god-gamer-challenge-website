@@ -65,7 +65,6 @@ def calculate_daily_game_win_rates(data):
             win_rate = (wins / total_games) * 100 if total_games > 0 else 0
             daily_win_rates.append({'Day': day, 'Win Rate': win_rate})
         win_rates_by_game[game_col] = pd.DataFrame(daily_win_rates)
-    
     return win_rates_by_game
 
 # Calculate daily game win rates
@@ -325,22 +324,6 @@ def Games():
     #Section to show the daily win rate for the selected game
     st.subheader(f"Daily Win Rate for {selected_game}")
 
-    # Get the win rate data for the selected game
-    selected_game_win_rate_df = win_rates_by_game.get(f"Game 1", pd.DataFrame())  # Adjust for Game 1, 2, etc.
-
-    if not selected_game_win_rate_df.empty:
-        game_daily_win_rate_chart = alt.Chart(selected_game_win_rate_df).mark_line(point=True).encode(
-            x=alt.X('Day:O', axis=alt.Axis(labelAngle=0)),
-            y='Win Rate:Q',
-            tooltip=['Day', 'Win Rate']
-        ).properties(
-            title=f'Win Rate per Day for {selected_game}'
-        )
-
-        st.altair_chart(game_daily_win_rate_chart, use_container_width=True)
-    else:
-        st.write("No data available for this game.")
-
     # Calculate win rate by game position
     position_wins = []
     for i in range(1, num_games + 1):  # Loop through Game 1 to Game X
@@ -350,6 +333,44 @@ def Games():
         win_rate = wins_in_position.sum() / total_in_position.sum() if total_in_position.sum() > 0 else 0
         position_wins.append(win_rate)
 
+    # Filter the relevant columns that contain game names and their respective win/loss columns
+    game_columns = [col for col in data.columns if 'Game' in col]
+    win_loss_columns = [col for col in data.columns if 'W or L' in col]
+
+    # Prepare a list to store win/loss data for the selected game
+    filtered_data = []
+
+    # Iterate through the data and filter out the results for the selected game
+    for index, row in data.iterrows():
+        for i in range(1, 11):  # There are up to 10 games and win/loss columns
+            game_col = f'Game {i}'
+            win_loss_col = f'Game {i}: W or L'
+            
+            if game_col in row and isinstance(row[game_col], str) and selected_game in row[game_col]:
+                if win_loss_col in row:
+                    filtered_data.append({'Day': row['Day'], 'Win/Loss': row[win_loss_col]})
+
+    # Convert filtered data into a DataFrame
+    filtered_df = pd.DataFrame(filtered_data)
+
+    # Remove rows where the win/loss information is NaN
+    filtered_df = filtered_df.dropna()
+
+    # Calculate win rate by grouping by 'Day' and calculating the percentage of 'W' (win) for each day
+    win_rate_for_game_given_day = filtered_df.groupby('Day').apply(lambda x: (x['Win/Loss'] == 'W').mean() * 100).reset_index(name='Win Rate')
+
+    # Plot the win rate using Altair
+    win_rate_per_game_per_day = alt.Chart(win_rate_for_game_given_day).mark_bar().encode(
+        x=alt.X('Day:N', title='Day'),
+        y=alt.Y('Win Rate:Q', title='Win Rate (%)')
+    ).properties(
+        title=f'Win Rate for {selected_game} per Day',
+        width=600,
+        height=400
+    )
+    # chart_with_trendline = chart + chart.transform_regression('Day', 'Win Rate').mark_line(color='red',strokeDash=[5, 5])
+    st.altair_chart(win_rate_per_game_per_day, use_container_width=True)
+        
     # Create a DataFrame to visualize win rate by position
     position_df = pd.DataFrame({
         'Position': range(1, num_games + 1),
