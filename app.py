@@ -28,6 +28,48 @@ runs_per_day = data.groupby("Day").size()
 games_list = data.filter(like="Game").apply(pd.Series.value_counts).index.tolist()
 # Filter out 'L' and 'W' from the games list
 games_list = [game for game in games_list if game not in ['L', 'W']]
+
+# Function to calculate overall daily win rates
+def calculate_daily_total_win_rates(data):
+    win_loss_columns = [col for col in data.columns if col.endswith("W or L")]
+    daily_total_win_rates = []
+
+    for day, group in data.groupby('Day'):
+        total_games = 0
+        total_wins = 0
+        for col in win_loss_columns:
+            game_data = group[col].dropna()
+            total_games += len(game_data)
+            total_wins += game_data.str.contains("W").sum()
+        
+        win_rate = (total_wins / total_games) * 100 if total_games > 0 else 0
+        daily_total_win_rates.append({'Day': day, 'Total Win Rate': win_rate})
+    
+    return pd.DataFrame(daily_total_win_rates)
+
+# Calculate overall daily win rates
+daily_total_win_rates = calculate_daily_total_win_rates(data)
+
+def calculate_daily_game_win_rates(data):
+    win_rates_by_game = {}
+    
+    game_columns = [col for col in data.columns if col.startswith("Game ") and not col.endswith("W or L")]
+    win_loss_columns = [col for col in data.columns if col.endswith("W or L")]
+    
+    for game_col, win_loss_col in zip(game_columns, win_loss_columns):
+        daily_win_rates = []
+        for day, group in data.groupby('Day'):
+            game_data = group[[game_col, win_loss_col]].dropna()
+            total_games = len(game_data)
+            wins = game_data[win_loss_col].str.contains("W").sum()
+            win_rate = (wins / total_games) * 100 if total_games > 0 else 0
+            daily_win_rates.append({'Day': day, 'Win Rate': win_rate})
+        win_rates_by_game[game_col] = pd.DataFrame(daily_win_rates)
+    
+    return win_rates_by_game
+
+# Calculate daily game win rates
+win_rates_by_game = calculate_daily_game_win_rates(data)
 def Overview():
     st.title("The God Gaming Challenge: Analysis & Strategy")
     st.write("Hey guys, I used u/readalot2 data to create something a bit more visual and interactive. Hope you enjoy and if you have any data ideas let me know I can cook it up quick! I can also link it directly to the sheet so the data updates as new data is entered but I'm working on it.")
@@ -40,7 +82,7 @@ def Overview():
     })
 
     win_loss_chart = alt.Chart(win_loss_df).mark_line(point=True).encode(
-        x='Day:O',
+        x=alt.X('Day:O', axis=alt.Axis(labelAngle=0)),
         y='Win/Loss Ratio:Q',
         tooltip=['Day', 'Win/Loss Ratio']
     ).properties(
@@ -78,7 +120,7 @@ def Overview():
     })
 
     # Pie chart for Wins vs Losses
-    fig_win_loss_pie = px.pie(win_loss_pie_data, values='Count', names='Result', title='Total Wins vs. Losses', color_discrete_sequence=px.colors.qualitative.Set1)
+    fig_win_loss_pie = px.pie(win_loss_pie_data, values='Count', names='Result', title='Total Wins vs. Losses', color_discrete_sequence=["#2B66A4","#DB0016"])
 
     # Pie chart for Percentage of Total Games Played
     total_games_df = pd.DataFrame({
@@ -145,7 +187,32 @@ def Overview():
     )
 
     # Display the chart
+    win_rate_chart = win_rate_chart.encode(
+        x=alt.X('Game:N', sort=alt.EncodingSortField(field='Win Rate', order='ascending'))
+    )
     st.altair_chart(win_rate_chart, use_container_width=True)
+
+
+    # Calculate the minimum value for the y-axis to avoid starting from 0
+    min_win_rate = daily_total_win_rates['Total Win Rate'].min()
+
+    # Create the base chart
+    total_win_rate_chart = alt.Chart(daily_total_win_rates).mark_line(point=True).encode(
+        x=alt.X('Day:O', axis=alt.Axis(labelAngle=0)),
+        y=alt.Y('Total Win Rate:Q', scale=alt.Scale(domain=[min_win_rate, daily_total_win_rates['Total Win Rate'].max()])),
+        tooltip=['Day', 'Total Win Rate']
+    ).properties(
+        title='Total Win Rate Per Day for All Games'
+    )
+ 
+    # Calculate the average win rate
+    average_win_rate = total_win_rate_chart.transform_regression('Day', 'Total Win Rate').mark_line(color='red', strokeDash=[5, 5])
+
+    # Combine the win rate chart and the average trend line
+    combined_chart = total_win_rate_chart + average_win_rate
+
+    # Display the chart
+    st.altair_chart(combined_chart, use_container_width=True)
 
     # Section 4: Games Played and Runs Per Day using Altair
     st.subheader("Daily Game Activity")
@@ -156,7 +223,7 @@ def Overview():
     })
 
     runs_chart = alt.Chart(games_runs_df).mark_line(point=True, color='red').encode(
-        x='Day:O',
+        x=alt.X('Day:O', axis=alt.Axis(labelAngle=0)),
         y='Runs:Q',
         tooltip=['Day', 'Runs']
     ).properties(
@@ -166,10 +233,8 @@ def Overview():
     # Combining both charts for games played and runs using Altair layering
     combined_chart = alt.layer(runs_chart).resolve_scale(y='independent')
     st.altair_chart(combined_chart, use_container_width=True)
-
 def Games():
     st.title("Game-Specific Stats")
-    
 
     # Use the filtered games list in the selectbox
     selected_game = st.selectbox("Select a Game", games_list)
@@ -185,12 +250,12 @@ def Games():
     for i in range(len(game_filter.columns)):
         game_column = f"Game {i+1}"
         win_loss_column = f"Game {i+1}: W or L"
-        
+
         if game_column in data.columns and win_loss_column in data.columns:
             # Only consider rows where the selected game is in the 'Game' column
             game_rows = data[game_column] == selected_game
             win_loss_data = data.loc[game_rows, win_loss_column]
-            
+
             # Count wins and losses in the filtered rows
             wins += win_loss_data.str.contains('W', na=False).sum()
             losses += win_loss_data.str.contains('L', na=False).sum()
@@ -200,70 +265,88 @@ def Games():
 
     # Calculate win rate
     win_rate = (wins / total_games) * 100 if total_games > 0 else 0
-    
-    # Display Calculated Metrics
-    st.subheader(f"Stats for {selected_game}")
-    st.write(f"**Total Games Played**: {total_games}")
-    st.write(f"**Wins**: {wins}")
-    st.write(f"**Losses**: {losses}")
-    st.write(f"**Win Rate**: {win_rate:.2f}%")
 
-    # Plotting Wins and Losses for the Selected Game using Plotly
-    game_win_loss_df = pd.DataFrame({
-        'Result': ['Wins', 'Losses'],
-        'Count': [wins, losses]
-    })
+    # Use two columns for the stats
+    col1, col2 = st.columns(2)
 
-    fig_game_win_loss_pie = px.pie(
-        game_win_loss_df, 
-        values='Count', 
-        names='Result', 
-        title=f'Wins vs Losses for {selected_game}',
-        color_discrete_sequence=["#2B66A4","#DB0016"]
-    )
+    with col1:
+        st.subheader(f"Stats for {selected_game}")
+        st.write(f"**Total Games Played**: {total_games}")
+        st.write(f"**Wins**: {wins}")
+        st.write(f"**Losses**: {losses}")
+        st.write(f"**Win Rate**: {win_rate:.2f}%")
 
-    st.plotly_chart(fig_game_win_loss_pie)
-    # Calculate Win Streaks for the selected game
-    win_streaks = []
-    current_streak = 0
-    longest_streak = 0
-    
-    for i in range(len(game_filter.columns)):
-        win_loss_column = f"Game {i+1}: W or L"
-        
-        if win_loss_column in data.columns:
-            for result in data[win_loss_column].dropna():
-                if result == 'W':  # Ensure you're comparing the specific result
-                    current_streak += 1
-                    longest_streak = max(longest_streak, current_streak)
-                else:
-                    if current_streak > 0:
-                        win_streaks.append(current_streak)
-                    current_streak = 0
+        # Calculate Win Streaks for the selected game
+        win_streaks = []
+        current_streak = 0
+        longest_streak = 0
 
-    average_streak = sum(win_streaks) / len(win_streaks) if win_streaks else 0
+        for i in range(len(game_filter.columns)):
+            win_loss_column = f"Game {i+1}: W or L"
 
-    # Display the streaks
-    st.write(f"**Longest Win Streak**: {longest_streak}")
-    st.write(f"**Average Win Streak**: {average_streak:.2f}")
+            if win_loss_column in data.columns:
+                for result in data[win_loss_column].dropna():
+                    if result == 'W':  # Ensure you're comparing the specific result
+                        current_streak += 1
+                        longest_streak = max(longest_streak, current_streak)
+                    else:
+                        if current_streak > 0:
+                            win_streaks.append(current_streak)
+                        current_streak = 0
+
+        average_streak = sum(win_streaks) / len(win_streaks) if win_streaks else 0
+
+        # Display the streaks
+        st.write(f"**Longest Win Streak**: {longest_streak}")
+        st.write(f"**Average Win Streak**: {average_streak:.2f}")
+
+    with col2:
+        # Plotting Wins and Losses for the Selected Game using Plotly
+        game_win_loss_df = pd.DataFrame({
+            'Result': ['Wins', 'Losses'],
+            'Count': [wins, losses]
+        })
+
+        fig_game_win_loss_pie = px.pie(
+            game_win_loss_df, 
+            values='Count', 
+            names='Result', 
+            title=f'Wins vs Losses for {selected_game}',
+            color_discrete_sequence=["#2B66A4","#DB0016"],
+            width=400,  # Adjusted size to make it smaller
+            height=300
+        )
+        st.plotly_chart(fig_game_win_loss_pie, use_container_width=True)
 
     # Dynamically detect the maximum number of games in the dataset
     game_columns = [col for col in data.columns if col.startswith("Game ") and not col.endswith("W or L")]
     num_games = len(game_columns)  # Number of games (X)
 
+    #Section to show the daily win rate for the selected game
+    st.subheader(f"Daily Win Rate for {selected_game}")
+
+    # Get the win rate data for the selected game
+    selected_game_win_rate_df = win_rates_by_game.get(f"Game 1", pd.DataFrame())  # Adjust for Game 1, 2, etc.
+
+    if not selected_game_win_rate_df.empty:
+        game_daily_win_rate_chart = alt.Chart(selected_game_win_rate_df).mark_line(point=True).encode(
+            x=alt.X('Day:O', axis=alt.Axis(labelAngle=0)),
+            y='Win Rate:Q',
+            tooltip=['Day', 'Win Rate']
+        ).properties(
+            title=f'Win Rate per Day for {selected_game}'
+        )
+
+        st.altair_chart(game_daily_win_rate_chart, use_container_width=True)
+    else:
+        st.write("No data available for this game.")
+
     # Calculate win rate by game position
     position_wins = []
     for i in range(1, num_games + 1):  # Loop through Game 1 to Game X
-        # Ensure that W or L values are treated as strings, replacing NaN with empty string
         win_loss_column = data[f"Game {i}: W or L"].fillna("").astype(str)
-        
-        # Check for wins in the current position
         wins_in_position = (data[f"Game {i}"] == selected_game) & (win_loss_column == 'W')
-        
-        # Check the total number of times the selected game was played in this position
         total_in_position = (data[f"Game {i}"] == selected_game)
-        
-        # Calculate win rate
         win_rate = wins_in_position.sum() / total_in_position.sum() if total_in_position.sum() > 0 else 0
         position_wins.append(win_rate)
 
@@ -275,58 +358,12 @@ def Games():
 
     # Plot the win rate by position using Altair
     position_chart = alt.Chart(position_df).mark_bar().encode(
-        x='Position:O',
+        x=alt.X('Position:O', axis=alt.Axis(labelAngle=0)),
         y='Win Rate:Q',
         tooltip=['Position', 'Win Rate']
     ).properties(title=f'Win Rate by Position for {selected_game}')
     st.altair_chart(position_chart, use_container_width=True)
 
-    # Calculate how many more games are played after playing the selected game in each run
-    games_after = []
-    for i in range(1, num_games):  # Loop through Game 1 to Game X-1
-        # Check if Game i+1 exists and is not NaN
-        played_after = data.loc[(data[f"Game {i}"] == selected_game), f"Game {i+1}: W or L"].notna().sum()
-        games_after.append(played_after)
-
-    # Dynamically detect the maximum number of games in the dataset
-    game_columns = [col for col in data.columns if col.startswith("Game ") and not col.endswith("W or L")]
-    num_games = len(game_columns)  # Number of games (X)
-
-    # Create a list to store the number of games played after for each turn and position in the run
-    games_after_data = []
-
-    # Loop through each row to determine how many games were played after each occurrence of the selected game
-    for index, row in data.iterrows():
-        for i in range(1, num_games):  # Loop through Game 1 to Game X-1
-            # Check if the selected game was played in this position
-            if row[f"Game {i}"] == selected_game:
-                # Calculate how many more games were played after this occurrence of the selected game
-                games_after = data.loc[index, f"Game {i+1}: W or L":f"Game {num_games}: W or L"].notna().sum()
-                
-                # Store the result as turn and position
-                games_after_data.append({
-                    'Turn': i,
-                    'Games Played After': games_after,
-                    'Run': row['Run'] if 'Run' in row else index  # Using 'Run' if available, otherwise use index
-                })
-
-    # Convert the results to a DataFrame
-    games_after_df = pd.DataFrame(games_after_data)
-
-    # Group the data by turn and calculate the average games played after for each turn
-    avg_games_after_by_turn = games_after_df.groupby('Turn')['Games Played After'].mean().reset_index()
-
-    # Plot the average games played after the selected game by turn using Altair
-    games_after_chart = alt.Chart(avg_games_after_by_turn).mark_bar().encode(
-        x='Turn:O',
-        y='Games Played After:Q',
-        tooltip=['Turn', 'Games Played After']
-    ).properties(title=f'Average Games Played After Each Turn for {selected_game}')
-    st.altair_chart(games_after_chart, use_container_width=True)
-
-    # Display the average number of games played after by position in the run
-    st.write(f"**Average Games Played After Playing {selected_game} by Turn**")
-    st.dataframe(avg_games_after_by_turn)
 
 page = st.navigation([st.Page(Overview), st.Page(Games)]) 
 page.run()
